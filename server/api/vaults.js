@@ -1,6 +1,7 @@
 const express = require('express');
 const path = require('path');
 const { createWebDavClient } = require('../webdav-client');
+const { slugify } = require('../vault-registry');
 
 // Returns the single-level slug if vaultPath is a direct child of vaultsDir.
 function deriveSlug(vaultPath, vaultsDir) {
@@ -12,6 +13,8 @@ function deriveSlug(vaultPath, vaultsDir) {
   return rel.includes(path.sep) ? null : rel;
 }
 
+const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+
 function createVaultsRouter(vaultRegistry, vaultsDir) {
   const router = express.Router();
 
@@ -20,13 +23,34 @@ function createVaultsRouter(vaultRegistry, vaultsDir) {
   });
 
   router.post('/open', express.json(), (req, res) => {
-    const result = vaultRegistry.open(req.body.path, req.body.create === true);
+    const vaultPath = req.body && req.body.path;
+    if (!vaultPath) return res.status(400).json({ ok: false, error: 'path required' });
+
+    // WebDAV vault: path is a URL — find the existing registry entry by URL.
+    if (typeof vaultPath === 'string' && /^https?:\/\//i.test(vaultPath)) {
+      const id = vaultRegistry.findIdByPath(vaultPath);
+      if (!id) return res.status(404).json({ ok: false, error: 'WebDAV vault not found in registry' });
+      const vault = vaultRegistry.get(id);
+      const name = vault.name || vaultPath.split('/').filter(Boolean).pop() || id;
+      const slug = slugify(name);
+      return res.json({ ok: true, id, slug: SLUG_RE.test(slug) ? slug : null });
+    }
+
+    const result = vaultRegistry.open(vaultPath, req.body.create === true);
     if (!result.ok) {
       res.status(400).json(result);
       return;
     }
-    const slug = deriveSlug(req.body.path, vaultsDir);
+    const slug = deriveSlug(vaultPath, vaultsDir);
     res.json({ ...result, slug });
+  });
+
+  router.post('/rename', express.json(), (req, res) => {
+    const { id, name } = req.body || {};
+    if (!id || !name) return res.status(400).json({ ok: false, error: 'id and name are required' });
+    const result = vaultRegistry.rename(id, name);
+    if (!result.ok) return res.status(404).json(result);
+    res.json({ ok: true });
   });
 
   router.post('/move', express.json(), (req, res) => {

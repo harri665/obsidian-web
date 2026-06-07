@@ -97,8 +97,19 @@ function createElectronRouter(vaultRegistry, fallbackVaultRoot) {
   });
 
   // ipcRenderer.sendSync('file-url', filePath)
+  // Obsidian calls this to get a loadable URL for vault resources (images, PDFs…).
+  // Returning file:// is blocked by browsers in web context; return our HTTP read
+  // API instead so the browser can actually fetch the resource.
   router.get('/file-url', (req, res) => {
-    res.json({ value: 'file://' + (req.query.path || '') });
+    const reqPath = req.query.path || '';
+    const vaultId = req.query.vault || '';
+    // Strip the virtual vault base prefix ('/vault' or 'vault') to get the relative path.
+    const relPath = reqPath.replace(/^\/vault\//, '').replace(/^vault\//, '').replace(/^\/+/, '');
+    if (relPath) {
+      const vaultParam = vaultId ? '&vault=' + encodeURIComponent(vaultId) : '';
+      return res.json({ value: '/api/fs/read?path=' + encodeURIComponent(relPath) + vaultParam });
+    }
+    res.json({ value: '' });
   });
 
   // ipcRenderer.sendSync('version')

@@ -68,6 +68,80 @@ const OBSIDIAN_SCRIPTS = [
   window.__owFs.setVaultBase(VAULT_BASE);
   window.__owFs.setVaultId(VAULT_ID);
 
+  // Rewrite file://vault/... resource URLs → HTTP API, since browsers block
+  // file:// entirely in web context.  Obsidian constructs these for images and
+  // other vault attachments (e.g. file://vault/image.png?<mtime>).
+  // Covers both the ipcRenderer.sendSync('file-url', …) path (fixed server-
+  // side) and any direct URL construction inside Obsidian's own code.
+  (function installFileUrlRewriter() {
+    function rewrite(url) {
+      if (!url || typeof url !== 'string' || !url.startsWith('file://')) return url;
+      try {
+        const u = new URL(url);
+        let relPath;
+        if (u.hostname === 'vault') {
+          // file://vault/path?mtime
+          relPath = decodeURIComponent(u.pathname).replace(/^\/+/, '');
+        } else if (!u.hostname && u.pathname.startsWith('/vault/')) {
+          // file:///vault/path?mtime
+          relPath = decodeURIComponent(u.pathname.slice('/vault/'.length));
+        } else {
+          return url;
+        }
+        if (!relPath) return url;
+        const vp = VAULT_ID ? '&vault=' + encodeURIComponent(VAULT_ID) : '';
+        return '/api/fs/read?path=' + encodeURIComponent(relPath) + vp;
+      } catch (_) { return url; }
+    }
+
+    const ATTRS = ['src', 'href', 'data'];
+    function rewriteEl(el) {
+      if (!el || el.nodeType !== 1) return;
+      for (const attr of ATTRS) {
+        const val = el.getAttribute(attr);
+        if (val && val.startsWith('file://')) {
+          const nv = rewrite(val);
+          if (nv !== val) el.setAttribute(attr, nv);
+        }
+      }
+    }
+    function rewriteTree(node) {
+      if (!node || node.nodeType !== 1) return;
+      rewriteEl(node);
+      try {
+        const found = node.querySelectorAll('[src],[href],[data]');
+        for (const el of found) rewriteEl(el);
+      } catch (_) {}
+    }
+
+    new MutationObserver(function (mutations) {
+      for (const m of mutations) {
+        if (m.type === 'attributes') {
+          const val = m.target.getAttribute(m.attributeName);
+          if (val && val.startsWith('file://')) {
+            const nv = rewrite(val);
+            if (nv !== val) m.target.setAttribute(m.attributeName, nv);
+          }
+        } else {
+          for (const node of m.addedNodes) rewriteTree(node);
+        }
+      }
+    }).observe(document.documentElement, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ATTRS,
+    });
+
+    // Also intercept img.src = '...' (property setter, not just setAttribute).
+    const imgDesc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+    if (imgDesc && imgDesc.set) {
+      Object.defineProperty(HTMLImageElement.prototype, 'src', {
+        get: imgDesc.get,
+        set: function (v) { imgDesc.set.call(this, rewrite(v)); },
+        configurable: true,
+      });
+    }
+  })();
+
   // Auto-trust community plugins in demo mode so the "Do you trust this
   // vault?" modal doesn't block first-time visitors.
   // Obsidian checks: localStorage.getItem("enable-plugin-" + appId)

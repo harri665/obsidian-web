@@ -2,6 +2,16 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
+// Convert a vault name into a URL-safe slug.
+function slugify(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64) || 'vault';
+}
+
 class VaultRegistry {
   constructor(registryPath) {
     this.registryPath = registryPath;
@@ -35,6 +45,15 @@ class VaultRegistry {
 
   get(id) {
     return this.vaults[id] || null;
+  }
+
+  findBySlug(slug) {
+    const target = slug.toLowerCase();
+    for (const [id, vault] of Object.entries(this.vaults)) {
+      const name = vault.name || vault.path.split(/[/\\]/).filter(Boolean).pop() || id;
+      if (slugify(name) === target) return id;
+    }
+    return null;
   }
 
   findIdByPath(vaultPath) {
@@ -81,8 +100,12 @@ class VaultRegistry {
 
     const existingId = this.findIdByPath(resolved);
     const id = existingId || crypto.randomBytes(8).toString('hex');
+    const existing = this.vaults[id] || {};
     this.vaults[id] = {
+      ...existing,
       path: resolved,
+      // Preserve existing name; derive from dir name if first registration.
+      name: existing.name || path.basename(resolved),
       ts: Date.now(),
       open: true,
     };
@@ -116,6 +139,14 @@ class VaultRegistry {
     return true;
   }
 
+  rename(id, newName) {
+    if (!this.vaults[id]) return { ok: false, error: 'vault not found' };
+    if (!newName || typeof newName !== 'string') return { ok: false, error: 'name required' };
+    this.vaults[id] = { ...this.vaults[id], name: newName.trim() };
+    this.save();
+    return { ok: true };
+  }
+
   removeById(id) {
     if (!this.vaults[id]) return false;
     delete this.vaults[id];
@@ -146,3 +177,4 @@ class VaultRegistry {
 }
 
 module.exports = VaultRegistry;
+module.exports.slugify = slugify;

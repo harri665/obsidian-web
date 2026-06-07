@@ -262,7 +262,8 @@
 
       // Special-cased channels that need args or non-GET semantics.
       if (channel === 'file-url') {
-        return global.__owSyncJson('GET', '/api/electron/file-url?path=' + encodeURIComponent(args[0] || '')).value;
+        const vaultParam = vaultId ? '&vault=' + encodeURIComponent(vaultId) : '';
+        return global.__owSyncJson('GET', '/api/electron/file-url?path=' + encodeURIComponent(args[0] || '') + vaultParam).value;
       }
       if (channel === 'trash') {
         return global.__owSyncJson('POST', '/api/electron/trash', { path: args[0], vault: vaultId }).ok || false;

@@ -69,6 +69,24 @@
       color: var(--text-on-accent);
       flex-shrink: 0;
     }
+    .ow-rename-form {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex: 1;
+      min-width: 0;
+    }
+    .ow-rename-form input {
+      flex: 1;
+      background: var(--background-modifier-form-field);
+      border: 1px solid var(--interactive-accent);
+      border-radius: 6px;
+      color: var(--text-normal);
+      padding: 5px 8px;
+      font-size: 0.875em;
+      outline: none;
+      min-width: 0;
+    }
     .ow-empty {
       padding: 20px 14px;
       color: var(--text-muted);
@@ -218,15 +236,10 @@ async function renderVaults() {
     for (const [id, vault] of entries) {
       const isWebDav = vault.type === 'webdav';
       const displayName = vault.name || vault.path.split(/[\\/]/).filter(Boolean).pop() || id;
-      const meta = isWebDav ? vault.path : vault.path;
+      const meta = vault.path;
 
       const row = document.createElement('div');
       row.className = 'ow-vault-row';
-
-      const info = document.createElement('div');
-      info.className = 'ow-vault-info';
-      info.innerHTML = '<div class="ow-vault-name">' + esc(displayName) + '</div>' +
-        '<div class="ow-vault-meta">' + esc(meta) + '</div>';
 
       if (isWebDav) {
         const badge = document.createElement('span');
@@ -235,9 +248,57 @@ async function renderVaults() {
         row.appendChild(badge);
       }
 
+      // Info block (swapped out when renaming)
+      const info = document.createElement('div');
+      info.className = 'ow-vault-info';
+      info.innerHTML = '<div class="ow-vault-name">' + esc(displayName) + '</div>' +
+        '<div class="ow-vault-meta">' + esc(meta) + '</div>';
+
       const openBtn = document.createElement('button');
       openBtn.textContent = 'Open';
       openBtn.onclick = () => { location.href = '/?vault=' + encodeURIComponent(id); };
+
+      const renameBtn = document.createElement('button');
+      renameBtn.textContent = 'Rename';
+      renameBtn.onclick = () => {
+        // Replace info block with inline rename form
+        const form = document.createElement('div');
+        form.className = 'ow-rename-form';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.value = displayName;
+        input.placeholder = 'New name';
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'mod-cta';
+        saveBtn.textContent = 'Save';
+        const cancelBtn = document.createElement('button');
+        cancelBtn.textContent = 'Cancel';
+
+        saveBtn.onclick = async () => {
+          const newName = input.value.trim();
+          if (!newName) return;
+          try {
+            const r = await fetch('/api/vaults/rename', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id, name: newName }),
+            });
+            const data = await r.json();
+            if (!data.ok) { alert('Rename failed: ' + (data.error || 'unknown')); return; }
+            await renderVaults();
+          } catch (e) { alert('Rename failed: ' + e.message); }
+        };
+        cancelBtn.onclick = () => renderVaults();
+        input.onkeydown = (e) => { if (e.key === 'Enter') saveBtn.onclick(); if (e.key === 'Escape') cancelBtn.onclick(); };
+
+        form.appendChild(input);
+        form.appendChild(saveBtn);
+        form.appendChild(cancelBtn);
+        row.replaceChild(form, info);
+        renameBtn.disabled = true;
+        openBtn.disabled = true;
+        setTimeout(() => { input.focus(); input.select(); }, 0);
+      };
 
       const removeBtn = document.createElement('button');
       removeBtn.className = 'mod-warning';
@@ -258,6 +319,7 @@ async function renderVaults() {
 
       row.appendChild(info);
       row.appendChild(openBtn);
+      row.appendChild(renameBtn);
       row.appendChild(removeBtn);
       list.appendChild(row);
     }

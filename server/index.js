@@ -133,13 +133,20 @@ function createApp(appConfig = config) {
   app.use('/api/electron', createElectronRouter(vaultRegistry, appConfig.vaultPath));
 
   // Named vault route — must be last so it doesn't shadow static/API paths.
-  // GET /:slug opens an existing vault dir at vaultsDir/slug.
-  // Does NOT auto-create — returns 404 for unknown slugs.
+  // GET /:slug — looks up by vault name first (covers WebDAV + renamed vaults),
+  // then falls back to a local dir at vaultsDir/slug.
   const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
   app.get('/:slug', async (req, res) => {
     const { slug } = req.params;
     if (!SLUG_RE.test(slug)) return res.status(400).send('Invalid vault name');
 
+    // 1. Check registry for any vault whose name slugifies to this slug.
+    const matchId = vaultRegistry.findBySlug(slug);
+    if (matchId) {
+      return sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), matchId);
+    }
+
+    // 2. Fall back to local vault at vaultsDir/slug.
     const vaultPath = path.join(appConfig.vaultsDir, slug);
     const result = vaultRegistry.open(vaultPath, false);
     if (!result.ok) return res.status(404).send('Vault not found: ' + slug);
