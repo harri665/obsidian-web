@@ -375,6 +375,16 @@
       ) {
         return;
       }
+      // Fire-and-forget channels with no meaningful web equivalent.
+      if (
+        channel === 'insider-build' ||
+        channel === 'update-app' ||
+        channel === 'check-update' ||
+        channel === 'focus-window' ||
+        channel === 'blur-window'
+      ) {
+        return;
+      }
       console.warn('[obsidian-web] unhandled ipcRenderer.send:', channel, args);
       window.__owMissing && window.__owMissing.record('send', channel);
     },

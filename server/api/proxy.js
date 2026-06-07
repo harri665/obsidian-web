@@ -48,7 +48,9 @@ function isAllowed(urlStr) {
   }
 }
 
-function fetchUrl(urlStr, method, reqHeaders, body) {
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+function fetchUrl(urlStr, method, reqHeaders, body, redirectsLeft = 10) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(urlStr); } catch (e) { return reject(e); }
@@ -63,6 +65,21 @@ function fetchUrl(urlStr, method, reqHeaders, body) {
     };
 
     const req = lib.request(options, (res) => {
+      // Follow redirects. GitHub release downloads redirect to the CDN.
+      if (REDIRECT_STATUSES.has(res.statusCode) && res.headers.location) {
+        res.resume(); // drain and discard the redirect body
+        if (redirectsLeft <= 0) return reject(new Error('too many redirects'));
+        let redirectUrl;
+        try { redirectUrl = new URL(res.headers.location, urlStr).href; }
+        catch (e) { return reject(e); }
+        if (!isAllowed(redirectUrl)) return reject(new Error('redirect to blocked host: ' + redirectUrl));
+        // 303 always becomes GET; 307/308 preserve method
+        const nextMethod = (res.statusCode === 303 || res.statusCode === 302 || res.statusCode === 301)
+          ? 'GET' : method;
+        resolve(fetchUrl(redirectUrl, nextMethod, reqHeaders, res.statusCode === 303 ? null : body, redirectsLeft - 1));
+        return;
+      }
+
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => {

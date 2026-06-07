@@ -420,6 +420,29 @@ const OBSIDIAN_SCRIPTS = [
           });
           obs.observe(document.body, { childList: true, subtree: true });
         }
+
+        // Some plugins (e.g. obsidian-latex-suite) call registerEditorExtension
+        // during onload before all workspace leaves have a live CM6 view.
+        // Obsidian's updateOptions iterates leaves and calls contentDOM.contains()
+        // on one that is still undefined, throwing a TypeError.  Patch it to catch
+        // that specific case and retry once after the views have initialised.
+        (function () {
+          var tick = setInterval(function () {
+            if (!window.app || typeof window.app.workspace.updateOptions !== 'function') return;
+            clearInterval(tick);
+            var ws = window.app.workspace;
+            var _orig = ws.updateOptions.bind(ws);
+            ws.updateOptions = function () {
+              var args = arguments;
+              try { return _orig.apply(ws, args); }
+              catch (e) {
+                if (!(e instanceof TypeError) || !e.message.includes('contains')) throw e;
+                console.warn('[obsidian-web] updateOptions: uninitialised editor view, retrying in 800ms');
+                setTimeout(function () { try { _orig.apply(ws, args); } catch (_) {} }, 800);
+              }
+            };
+          }, 150);
+        })();
       })
       .catch(function (err) {
         stopPolling();
