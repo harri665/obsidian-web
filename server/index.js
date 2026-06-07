@@ -17,6 +17,7 @@ const config = require('./config');
 const createFsRouter = require('./api/fs');
 const createElectronRouter = require('./api/electron');
 const createVaultsRouter = require('./api/vaults');
+const createManageRouter = require('./api/manage');
 const createBootstrapRouter = require('./api/bootstrap');
 const { warmUpBootstrapCache } = require('./api/bootstrap');
 const createProxyRouter = require('./api/proxy');
@@ -84,6 +85,10 @@ function createApp(appConfig = config) {
     sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'starter.html'));
   });
 
+  app.get('/manage', (req, res) => {
+    sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'manage.html'));
+  });
+
   // Static files - order matters: client/ first, then obsidian/.
   app.use('/client', express.static(appConfig.clientPath, {
     setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
@@ -123,21 +128,21 @@ function createApp(appConfig = config) {
   app.use('/api/bootstrap', createBootstrapRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/proxy-request', createProxyRouter());
   app.use('/api/vaults', createVaultsRouter(vaultRegistry, appConfig.vaultsDir));
+  app.use('/api/manage', createManageRouter(appConfig));
   app.use('/api/fs', createFsRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/electron', createElectronRouter(vaultRegistry, appConfig.vaultPath));
 
   // Named vault route — must be last so it doesn't shadow static/API paths.
-  // GET /:slug auto-creates the vault dir at vaultsDir/slug on first visit,
-  // registers it in the vault registry, then serves index.html with the
-  // vault ID pre-injected so boot.js doesn't need a ?vault= query param.
+  // GET /:slug opens an existing vault dir at vaultsDir/slug.
+  // Does NOT auto-create — returns 404 for unknown slugs.
   const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
   app.get('/:slug', async (req, res) => {
     const { slug } = req.params;
     if (!SLUG_RE.test(slug)) return res.status(400).send('Invalid vault name');
 
     const vaultPath = path.join(appConfig.vaultsDir, slug);
-    const result = vaultRegistry.open(vaultPath, true);
-    if (!result.ok) return res.status(500).send('Could not open vault: ' + result.error);
+    const result = vaultRegistry.open(vaultPath, false);
+    if (!result.ok) return res.status(404).send('Vault not found: ' + slug);
 
     await sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), result.id);
   });

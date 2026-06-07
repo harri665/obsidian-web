@@ -38,9 +38,16 @@ class VaultRegistry {
   }
 
   findIdByPath(vaultPath) {
+    // WebDAV vaults use the URL as their path key (no path.resolve needed).
+    if (vaultPath && vaultPath.startsWith('http')) {
+      for (const [id, vault] of Object.entries(this.vaults)) {
+        if (vault.path === vaultPath) return id;
+      }
+      return null;
+    }
     const resolved = path.resolve(vaultPath);
     for (const [id, vault] of Object.entries(this.vaults)) {
-      if (path.resolve(vault.path) === resolved) return id;
+      if (vault.type !== 'webdav' && path.resolve(vault.path) === resolved) return id;
     }
     return null;
   }
@@ -83,9 +90,34 @@ class VaultRegistry {
     return { ok: true, id };
   }
 
+  addWebDav(url, username, password, name) {
+    try { new URL(url); } catch (_) { return { ok: false, error: 'invalid URL' }; }
+    const existingId = this.findIdByPath(url);
+    const id = existingId || crypto.randomBytes(8).toString('hex');
+    this.vaults[id] = {
+      type: 'webdav',
+      path: url,
+      webdavUrl: url,
+      webdavUsername: username || '',
+      webdavPassword: password || '',
+      name: name || url.split('/').filter(Boolean).pop() || 'webdav-vault',
+      ts: Date.now(),
+      open: true,
+    };
+    this.save();
+    return { ok: true, id };
+  }
+
   remove(vaultPath) {
     const id = this.findIdByPath(vaultPath);
     if (!id) return false;
+    delete this.vaults[id];
+    this.save();
+    return true;
+  }
+
+  removeById(id) {
+    if (!this.vaults[id]) return false;
     delete this.vaults[id];
     this.save();
     return true;

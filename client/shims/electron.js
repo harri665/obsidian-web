@@ -411,7 +411,11 @@
       if (channel) ipcListeners.delete(channel);
       else ipcListeners.clear();
     },
-    invoke: warnUnimplemented('ipcRenderer.invoke'),
+    invoke(channel, ...args) {
+      console.warn('[obsidian-web] ipcRenderer.invoke called:', channel, args);
+      window.__owMissing && window.__owMissing.record('invoke', channel);
+      return Promise.resolve(null);
+    },
   };
 
   // ---- remote stubs -----------------------------------------------------

@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>Manage Vaults — Obsidian Web</title>
+  <link href="/obsidian/app.css" type="text/css" rel="stylesheet"/>
+  <style>
+    body { font-family: var(--font-interface, -apple-system, BlinkMacSystemFont, sans-serif); }
+    .ow-manage {
+      max-width: 640px;
+      margin: 48px auto;
+      padding: 0 24px 64px;
+    }
+    .ow-heading {
+      font-size: 1.5em;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+    .ow-sub {
+      color: var(--text-muted);
+      font-size: 0.9em;
+      margin-bottom: 28px;
+    }
+    .ow-section {
+      margin-top: 28px;
+    }
+    .ow-section-title {
+      font-size: 0.75em;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+    .ow-vault-list {
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .ow-vault-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--background-modifier-border);
+    }
+    .ow-vault-row:last-child { border-bottom: none; }
+    .ow-vault-info { flex: 1; min-width: 0; }
+    .ow-vault-name {
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ow-vault-meta {
+      font-size: 0.8em;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    .ow-vault-badge {
+      font-size: 0.7em;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: var(--interactive-accent);
+      color: var(--text-on-accent);
+      flex-shrink: 0;
+    }
+    .ow-empty {
+      padding: 20px 14px;
+      color: var(--text-muted);
+      font-size: 0.9em;
+      text-align: center;
+    }
+    .ow-form {
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .ow-form input[type=text],
+    .ow-form input[type=url],
+    .ow-form input[type=password] {
+      background: var(--background-modifier-form-field);
+      border: 1px solid var(--background-modifier-border);
+      border-radius: 6px;
+      color: var(--text-normal);
+      padding: 7px 10px;
+      font-size: 0.9em;
+      width: 100%;
+      box-sizing: border-box;
+      outline: none;
+    }
+    .ow-form input:focus {
+      border-color: var(--interactive-accent);
+    }
+    .ow-form-row {
+      display: flex;
+      gap: 8px;
+    }
+    .ow-form-row input { flex: 1; }
+    .ow-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    .ow-status {
+      font-size: 0.85em;
+      color: var(--text-muted);
+      min-height: 1.2em;
+    }
+    .ow-status.ok { color: var(--color-green, #4caf50); }
+    .ow-status.err { color: var(--color-red, #e74c3c); }
+    .ow-hint {
+      font-size: 0.8em;
+      color: var(--text-muted);
+    }
+    button {
+      cursor: pointer;
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 0.875em;
+      border: 1px solid var(--background-modifier-border);
+      background: var(--interactive-normal);
+      color: var(--text-normal);
+    }
+    button:hover { background: var(--interactive-hover); }
+    button.mod-cta {
+      background: var(--interactive-accent);
+      color: var(--text-on-accent);
+      border-color: transparent;
+    }
+    button.mod-cta:hover { background: var(--interactive-accent-hover, var(--interactive-accent)); filter: brightness(1.1); }
+    button.mod-warning {
+      background: transparent;
+      color: var(--text-error, var(--color-red, #e74c3c));
+      border-color: var(--background-modifier-border);
+    }
+    button.mod-warning:hover { background: var(--background-modifier-error, rgba(231,76,60,0.1)); }
+  </style>
+</head>
+<body class="theme-dark">
+<div class="ow-manage">
+  <div class="ow-heading">Manage Vaults</div>
+  <div class="ow-sub">Open, add, or remove vaults. <a href="/starter">Switch vault &rarr;</a></div>
+
+  <div class="ow-section">
+    <div class="ow-section-title">Registered Vaults</div>
+    <div id="vault-list"><div class="ow-empty">Loading…</div></div>
+  </div>
+
+  <div class="ow-section">
+    <div class="ow-section-title">Add Local Vault</div>
+    <div class="ow-form">
+      <div>
+        <input id="local-path" type="text" placeholder="Server path (e.g. /data/vaults/my-vault)"/>
+        <div class="ow-hint" id="local-hint"></div>
+      </div>
+      <div class="ow-actions">
+        <button class="mod-cta" onclick="addLocalVault()">Add Vault</button>
+      </div>
+      <div class="ow-status" id="local-status"></div>
+    </div>
+  </div>
+
+  <div class="ow-section">
+    <div class="ow-section-title">Add WebDAV Vault</div>
+    <div class="ow-form">
+      <input id="wd-url" type="url" placeholder="WebDAV URL (e.g. https://cloud.example.com/remote.php/dav/files/user/vault)"/>
+      <div class="ow-form-row">
+        <input id="wd-username" type="text" placeholder="Username (optional)"/>
+        <input id="wd-password" type="password" placeholder="Password (optional)"/>
+      </div>
+      <input id="wd-name" type="text" placeholder="Display name (optional)"/>
+      <div class="ow-actions">
+        <button onclick="testWebDav()">Test Connection</button>
+        <button class="mod-cta" onclick="addWebDavVault()">Add WebDAV Vault</button>
+      </div>
+      <div class="ow-status" id="wd-status"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(async function init() {
+  await renderVaults();
+
+  // Show vaultsDir as a hint for the local path input
+  try {
+    const r = await fetch('/api/manage/vaults-dir');
+    const { vaultsDir } = await r.json();
+    if (vaultsDir) {
+      document.getElementById('local-hint').textContent = 'Vaults directory: ' + vaultsDir;
+    }
+  } catch (_) {}
+})();
+
+async function renderVaults() {
+  const container = document.getElementById('vault-list');
+  try {
+    const res = await fetch('/api/vaults/list');
+    const vaults = await res.json();
+    const entries = Object.entries(vaults);
+
+    if (entries.length === 0) {
+      container.innerHTML = '<div class="ow-vault-list"><div class="ow-empty">No vaults registered.</div></div>';
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'ow-vault-list';
+
+    for (const [id, vault] of entries) {
+      const isWebDav = vault.type === 'webdav';
+      const displayName = vault.name || vault.path.split(/[\\/]/).filter(Boolean).pop() || id;
+      const meta = isWebDav ? vault.path : vault.path;
+
+      const row = document.createElement('div');
+      row.className = 'ow-vault-row';
+
+      const info = document.createElement('div');
+      info.className = 'ow-vault-info';
+      info.innerHTML = '<div class="ow-vault-name">' + esc(displayName) + '</div>' +
+        '<div class="ow-vault-meta">' + esc(meta) + '</div>';
+
+      if (isWebDav) {
+        const badge = document.createElement('span');
+        badge.className = 'ow-vault-badge';
+        badge.textContent = 'WebDAV';
+        row.appendChild(badge);
+      }
+
+      const openBtn = document.createElement('button');
+      openBtn.textContent = 'Open';
+      openBtn.onclick = () => { location.href = '/?vault=' + encodeURIComponent(id); };
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'mod-warning';
+      removeBtn.textContent = 'Remove';
+      removeBtn.onclick = async () => {
+        if (!confirm('Remove "' + displayName + '" from the vault registry?\n\nFiles will NOT be deleted.')) return;
+        try {
+          await fetch('/api/vaults/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          });
+          await renderVaults();
+        } catch (e) {
+          alert('Remove failed: ' + e.message);
+        }
+      };
+
+      row.appendChild(info);
+      row.appendChild(openBtn);
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    }
+
+    container.innerHTML = '';
+    container.appendChild(list);
+  } catch (e) {
+    container.innerHTML = '<div class="ow-empty">Error loading vaults: ' + esc(e.message) + '</div>';
+  }
+}
+
+async function addLocalVault() {
+  const pathInput = document.getElementById('local-path');
+  const statusEl = document.getElementById('local-status');
+  const p = pathInput.value.trim();
+  if (!p) { setStatus(statusEl, 'err', 'Please enter a path.'); return; }
+  setStatus(statusEl, '', 'Opening…');
+  try {
+    const res = await fetch('/api/vaults/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: p, create: false }),
+    });
+    const data = await res.json();
+    if (!data.ok) { setStatus(statusEl, 'err', data.error || 'Failed to open vault.'); return; }
+    setStatus(statusEl, 'ok', 'Vault added.');
+    pathInput.value = '';
+    await renderVaults();
+  } catch (e) { setStatus(statusEl, 'err', e.message); }
+}
+
+async function testWebDav() {
+  const statusEl = document.getElementById('wd-status');
+  const url = document.getElementById('wd-url').value.trim();
+  const username = document.getElementById('wd-username').value.trim();
+  const password = document.getElementById('wd-password').value;
+  if (!url) { setStatus(statusEl, 'err', 'Please enter a WebDAV URL.'); return; }
+  setStatus(statusEl, '', 'Testing connection…');
+  try {
+    const res = await fetch('/api/vaults/test-webdav', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, username, password }),
+    });
+    const data = await res.json();
+    if (data.ok) setStatus(statusEl, 'ok', 'Connection successful!');
+    else setStatus(statusEl, 'err', 'Connection failed: ' + (data.error || 'unknown error'));
+  } catch (e) { setStatus(statusEl, 'err', e.message); }
+}
+
+async function addWebDavVault() {
+  const statusEl = document.getElementById('wd-status');
+  const url = document.getElementById('wd-url').value.trim();
+  const username = document.getElementById('wd-username').value.trim();
+  const password = document.getElementById('wd-password').value;
+  const name = document.getElementById('wd-name').value.trim();
+  if (!url) { setStatus(statusEl, 'err', 'Please enter a WebDAV URL.'); return; }
+  setStatus(statusEl, '', 'Adding vault…');
+  try {
+    const res = await fetch('/api/vaults/add-webdav', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, username, password, name }),
+    });
+    const data = await res.json();
+    if (!data.ok) { setStatus(statusEl, 'err', data.error || 'Failed to add vault.'); return; }
+    setStatus(statusEl, 'ok', 'WebDAV vault added.');
+    document.getElementById('wd-url').value = '';
+    document.getElementById('wd-username').value = '';
+    document.getElementById('wd-password').value = '';
+    document.getElementById('wd-name').value = '';
+    await renderVaults();
+  } catch (e) { setStatus(statusEl, 'err', e.message); }
+}
+
+function setStatus(el, cls, msg) {
+  el.textContent = msg;
+  el.className = 'ow-status' + (cls ? ' ' + cls : '');
+}
+
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
+</body>
+</html>

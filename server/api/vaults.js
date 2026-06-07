@@ -1,5 +1,6 @@
 const express = require('express');
 const path = require('path');
+const { createWebDavClient } = require('../webdav-client');
 
 // Returns the single-level slug if vaultPath is a direct child of vaultsDir.
 function deriveSlug(vaultPath, vaultsDir) {
@@ -44,15 +45,41 @@ function createVaultsRouter(vaultRegistry, vaultsDir) {
   });
 
   router.post('/remove', express.json(), (req, res) => {
-    if (!req.body || typeof req.body.path !== 'string') {
-      return res.status(400).json({ ok: false, error: 'path is required' });
-    }
+    if (!req.body) return res.status(400).json({ ok: false, error: 'body required' });
     try {
-      const removed = vaultRegistry.remove(req.body.path);
+      // Accept either { id } or { path }
+      let removed = false;
+      if (req.body.id) {
+        removed = vaultRegistry.removeById(req.body.id);
+      } else if (typeof req.body.path === 'string') {
+        removed = vaultRegistry.remove(req.body.path);
+      } else {
+        return res.status(400).json({ ok: false, error: 'id or path required' });
+      }
       if (!removed) return res.status(404).json({ ok: false, error: 'vault not found' });
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  router.post('/add-webdav', express.json(), (req, res) => {
+    const { url, username, password, name } = req.body || {};
+    if (!url) return res.status(400).json({ ok: false, error: 'url is required' });
+    const result = vaultRegistry.addWebDav(url, username || '', password || '', name || '');
+    if (!result.ok) return res.status(400).json(result);
+    res.json(result);
+  });
+
+  router.post('/test-webdav', express.json(), async (req, res) => {
+    const { url, username, password } = req.body || {};
+    if (!url) return res.status(400).json({ ok: false, error: 'url is required' });
+    try {
+      const client = createWebDavClient(url, username || '', password || '');
+      const ok = await client.testConnection();
+      res.json({ ok });
+    } catch (err) {
+      res.json({ ok: false, error: err.message });
     }
   });
 

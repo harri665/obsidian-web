@@ -39,6 +39,7 @@ const fsp = fs.promises;
 const path = require('path');
 const zlib = require('zlib');
 const config = require('../config');
+const { getClient } = require('../webdav-client');
 
 // ── Server-side bootstrap cache ───────────────────────────────────────────────
 //
@@ -241,6 +242,11 @@ async function buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false) 
 async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false) {
   const t0 = Date.now();
   const vault = vaultId ? vaultRegistry.get(vaultId) : null;
+
+  // WebDAV vaults: walk via WebDAV client instead of local fs.
+  if (vault && vault.type === 'webdav') {
+    return _buildCacheEntryWebDav(vaultId, vault, vaultRegistry, full, t0);
+  }
 
   // ── Electron IPC values ────────────────────────────────────────────
   const electronValues = {
