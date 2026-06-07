@@ -274,7 +274,8 @@
         const result = global.__owSyncJson('POST', '/api/vaults/open', { path: args[0], create: args[1] === true });
         if (!result.ok) return result.error || false;
         localStorage.setItem('obsidian-web:lastVaultId', result.id);
-        setTimeout(() => { location.href = '/?vault=' + encodeURIComponent(result.id); }, 0);
+        const target = result.slug ? '/' + result.slug : '/?vault=' + encodeURIComponent(result.id);
+        setTimeout(() => { location.href = target; }, 0);
         return true;
       }
       if (channel === 'vault-remove') {

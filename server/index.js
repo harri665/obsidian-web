@@ -70,8 +70,12 @@ function createApp(appConfig = config) {
     }
   }
 
-  // Root redirects to the default vault when vaultsDir mode is active.
+  // Root: if a vault ID was passed (e.g. from vault-open navigation), serve
+  // the app for that vault; otherwise redirect to /default in vaultsDir mode.
   app.get('/', (req, res) => {
+    if (req.query.vault) {
+      return sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), req.query.vault);
+    }
     if (appConfig.vaultsDir) return res.redirect('/default');
     sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'));
   });

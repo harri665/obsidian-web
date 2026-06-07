@@ -1,6 +1,17 @@
 const express = require('express');
+const path = require('path');
 
-function createVaultsRouter(vaultRegistry) {
+// Returns the single-level slug if vaultPath is a direct child of vaultsDir.
+function deriveSlug(vaultPath, vaultsDir) {
+  if (!vaultPath || !vaultsDir) return null;
+  const resolved = path.resolve(vaultPath);
+  const dir = path.resolve(vaultsDir);
+  if (!resolved.startsWith(dir + path.sep)) return null;
+  const rel = resolved.slice(dir.length + path.sep.length);
+  return rel.includes(path.sep) ? null : rel;
+}
+
+function createVaultsRouter(vaultRegistry, vaultsDir) {
   const router = express.Router();
 
   router.get('/list', (req, res) => {
@@ -13,7 +24,8 @@ function createVaultsRouter(vaultRegistry) {
       res.status(400).json(result);
       return;
     }
-    res.json(result);
+    const slug = deriveSlug(req.body.path, vaultsDir);
+    res.json({ ...result, slug });
   });
 
   router.post('/move', express.json(), (req, res) => {
