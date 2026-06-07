@@ -211,6 +211,70 @@ async function walkDir(dir, root, fsCache, dirsCache, walkHidden = false, progre
   }
 }
 
+// ── WebDAV bootstrap ──────────────────────────────────────────────────────────
+
+async function _buildCacheEntryWebDav(vaultId, vault, vaultRegistry, full, t0) {
+  // Return cached entry if it satisfies the current request (simple time-based;
+  // WebDAV has no cheap directory-mtime check like local fs).
+  const cached = serverCache.get(vaultId);
+  if (cached && (cached.isFull || !full)) {
+    const hitMs = Date.now() - t0;
+    console.log(`[bootstrap] webdav vault=${vaultId.slice(0, 8)}… cache HIT (${hitMs}ms)`);
+    return cached;
+  }
+
+  const electronValues = {
+    'vault':          { id: vaultId, path: VAULT_BASE },
+    'vault-list':     vaultRegistry.list(),
+    'is-dev':         false,
+    'version':        APP_VERSION,
+    'frame':          'hidden',
+    'resources':      '',
+    'file-url':       '',
+    'disable-update': true,
+    'update':         '',
+    'check-update':   false,
+    'insider-build':  false,
+    'cli':            false,
+    'disable-gpu':    false,
+    'is-quitting':    false,
+  };
+
+  setProgress(vaultId, { state: 'scanning', label: 'Scanning WebDAV vault...', dirs: 0, files: 0, filesRead: 0, pct: 0 });
+
+  const client = getClient(vaultId, vault);
+  const progress = {
+    dirs: 0,
+    filesRead: 0,
+    cb() {
+      setProgress(vaultId, { state: 'scanning', dirs: this.dirs, filesRead: this.filesRead });
+    },
+  };
+
+  const { fsCache, dirsCache } = await client.walkForBootstrap(
+    isTextFile, MAX_CONTENT_BYTES, READ_BATCH, false, full, progress,
+  );
+
+  const response = { electron: electronValues, fs: fsCache, dirs: dirsCache };
+
+  setProgress(vaultId, { state: 'compressing', label: 'Compressing...', pct: 90 });
+  const jsonBuf = Buffer.from(JSON.stringify(response));
+  let compressed = {};
+  try { compressed = await preCompress(jsonBuf); } catch (_) {}
+
+  const entry = { response, dirMtimes: {}, compressed, isFull: full };
+  serverCache.set(vaultId, entry);
+  setProgress(vaultId, { state: 'ready', label: 'Ready', pct: 100 });
+  setTimeout(() => buildProgress.delete(vaultId), 5000);
+
+  const fileCount = Object.keys(fsCache).length;
+  const dirCount = Object.keys(dirsCache).length;
+  const ms = Date.now() - t0;
+  console.log(`[bootstrap] webdav vault=${vaultId.slice(0, 8)}… full=${full} files=${fileCount} dirs=${dirCount} time=${ms}ms`);
+
+  return entry;
+}
+
 // ── core build ────────────────────────────────────────────────────────────────
 
 /**
@@ -488,7 +552,11 @@ async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot) {
     return;
   }
   for (const id of ids) {
-    const { path: vaultPath } = vaults[id];
+    const vault = vaults[id];
+    // Skip WebDAV vaults during startup warm-up to avoid blocking on network calls.
+    // They bootstrap on first access instead.
+    if (vault.type === 'webdav') continue;
+    const { path: vaultPath } = vault;
     try {
       // Phase 1: fast partial build so the first request is never a cold MISS.
       await buildCacheEntry(id, vaultPath, vaultRegistry, false);
