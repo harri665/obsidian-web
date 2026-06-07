@@ -177,4 +177,4 @@ If the Obsidian team has any concerns about this project, please [open an issue]
 
 ## Credits
 
-Built by [MusiCode1](https://github.com/MusiCode1) and [Claude Code](https://claude.ai/code).
+Built by [MusiCode1](https://github.com/MusiCode1).
