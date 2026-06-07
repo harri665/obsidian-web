@@ -11,6 +11,7 @@ const express = require('express');
 const fs = require('fs');
 const fsp = fs.promises;
 const path = require('path');
+const { getClient } = require('../webdav-client');
 
 // Imported lazily to avoid circular require — bootstrap.js exports serverCache.
 function invalidateBootstrapCache(vaultId) {
@@ -92,7 +93,7 @@ process.on('SIGINT', () => flushAllPending().finally(() => process.exit(0)));
 function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   const router = express.Router();
 
-  function getVaultRoot(req) {
+  function getVaultInfo(req) {
     const vaultId = req.query.vault || (req.body && req.body.vault);
     if (vaultId) {
       const vault = vaultRegistry.get(vaultId);
@@ -101,9 +102,41 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
         err.code = 'ENOVAULT';
         throw err;
       }
+      return { vaultId, vault };
+    }
+    return { vaultId: null, vault: null };
+  }
+
+  function getVaultRoot(req) {
+    const { vault } = getVaultInfo(req);
+    if (vault) {
+      if (vault.type === 'webdav') throw Object.assign(new Error('webdav vault'), { code: 'EWEBDAV' });
       return vault.path;
     }
     return fallbackVaultRoot;
+  }
+
+  // Validate and normalize a relative path for WebDAV (no .. traversal).
+  function normalizeWebDavPath(rawPath) {
+    if (typeof rawPath !== 'string') throw new Error('path must be a string');
+    const normalized = rawPath.replace(/\\/g, '/').replace(/\/+/g, '/').replace(/^\/+/, '');
+    if (normalized.split('/').some((p) => p === '..')) throw new Error('path traversal not allowed');
+    return normalized;
+  }
+
+  // WebDAV stat → serializeStats shape
+  function webdavStatsToSerial(stats) {
+    return {
+      isFile: stats.isFile,
+      isDirectory: stats.isDirectory,
+      isSymbolicLink: false,
+      size: stats.size,
+      mtime: stats.mtime,
+      ctime: stats.mtime,
+      atime: stats.mtime,
+      birthtime: stats.mtime,
+      mode: stats.isDirectory ? 0o040755 : 0o100644,
+    };
   }
 
   // Resolve a path relative to the vault root, ensuring it stays inside.
@@ -155,10 +188,16 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   // Stat a single entry.
   router.get('/stat', async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        const client = getClient(vaultId, vault);
+        const stats = await client.stat(relPath || '');
+        return res.json(webdavStatsToSerial(stats));
+      }
       const target = resolveSafe(req, req.query.path || '');
       const pending = getPendingContent(target);
       const stats = await fsp.stat(target);
-      // If there's a pending write, override mtime so the client sees fresh data.
       if (pending) {
         stats.mtime = new Date(pending.mtime);
         stats.mtimeMs = pending.mtime;
@@ -172,9 +211,20 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   // List directory contents (with stats so the client can avoid extra round-trips).
   router.get('/readdir', async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        const client = getClient(vaultId, vault);
+        const entries = await client.readdir(relPath || '');
+        return res.json(entries.map((e) => ({
+          name: e.name,
+          isFile: e.isFile,
+          isDirectory: e.isDirectory,
+          isSymbolicLink: false,
+          stats: webdavStatsToSerial(e.stats),
+        })));
+      }
       const target = resolveSafe(req, req.query.path || '');
-      // Helpful debug: log the resolved absolute path when readdir is called.
-      // Useful for tracking down "readdir on a file" mysteries.
       if (process.env.OW_DEBUG) {
         console.log('[readdir]', req.query.path, '->', target);
       }
@@ -185,9 +235,7 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
         try {
           const s = await fsp.stat(child);
           stats = serializeStats(s);
-        } catch (_) {
-          // Broken symlink or permission issue: still return the name.
-        }
+        } catch (_) {}
         return {
           name: entry.name,
           isFile: entry.isFile(),
@@ -205,9 +253,21 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   // Read a file (text or binary depending on ?encoding).
   router.get('/read', async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        const encoding = req.query.encoding || null;
+        const client = getClient(vaultId, vault);
+        if (encoding) {
+          const data = await client.readText(relPath);
+          return res.type('text/plain; charset=utf-8').send(data);
+        } else {
+          const data = await client.readBinary(relPath);
+          return res.type('application/octet-stream').send(data);
+        }
+      }
       const target = resolveSafe(req, req.query.path || '');
       const encoding = req.query.encoding || null;
-      // Serve from debounce buffer if a write is pending.
       const pending = getPendingContent(target);
       if (pending) {
         if (encoding) {
@@ -233,13 +293,22 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
   // ?encoding=utf8 means the server treats body as utf-8 text.
   router.put('/write', express.raw({ type: '*/*', limit: '256mb' }), async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        const encoding = req.query.encoding || null;
+        const data = encoding ? req.body.toString(encoding) : req.body;
+        const client = getClient(vaultId, vault);
+        await client.write(relPath, data);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const relPath = req.query.path || '';
       const target = resolveSafe(req, relPath);
       const encoding = req.query.encoding || null;
       const data = encoding ? req.body.toString(encoding) : req.body;
       await fsp.mkdir(path.dirname(target), { recursive: true });
 
-      // If this file was written recently, coalesce instead of hitting disk.
       if (shouldCoalesce(target)) {
         pendingWrites.set(target, { data, encoding, timer: null, mtime: Date.now() });
         scheduleFlush(target);
@@ -259,6 +328,13 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
 
   router.post('/mkdir', express.json(), async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.body.path || '');
+        await getClient(vaultId, vault).mkdir(relPath);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const target = resolveSafe(req, req.body.path || '');
       const recursive = req.body.recursive !== false;
       await fsp.mkdir(target, { recursive });
@@ -271,6 +347,13 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
 
   router.delete('/unlink', async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        await getClient(vaultId, vault).unlink(relPath);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const target = resolveSafe(req, req.query.path || '');
       await fsp.unlink(target);
       invalidateBootstrapCache(req.query.vault);
@@ -282,6 +365,14 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
 
   router.delete('/rmdir', async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const relPath = normalizeWebDavPath(req.query.path || '');
+        // WebDAV DELETE works for both files and directories
+        await getClient(vaultId, vault).unlink(relPath);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const target = resolveSafe(req, req.query.path || '');
       const recursive = req.query.recursive === '1';
       if (recursive) {
@@ -298,6 +389,14 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
 
   router.post('/rename', express.json(), async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const oldPath = normalizeWebDavPath(req.body.oldPath || '');
+        const newPath = normalizeWebDavPath(req.body.newPath || '');
+        await getClient(vaultId, vault).move(oldPath, newPath);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const oldPath = resolveSafe(req, req.body.oldPath || '');
       const newPath = resolveSafe(req, req.body.newPath || '');
       await fsp.rename(oldPath, newPath);
@@ -310,6 +409,14 @@ function createFsRouter(vaultRegistry, fallbackVaultRoot) {
 
   router.post('/copy', express.json(), async (req, res) => {
     try {
+      const { vaultId, vault } = getVaultInfo(req);
+      if (vault && vault.type === 'webdav') {
+        const src = normalizeWebDavPath(req.body.src || '');
+        const dest = normalizeWebDavPath(req.body.dest || '');
+        await getClient(vaultId, vault).copy(src, dest);
+        invalidateBootstrapCache(vaultId);
+        return res.json({ ok: true });
+      }
       const src = resolveSafe(req, req.body.src || '');
       const dest = resolveSafe(req, req.body.dest || '');
       await fsp.copyFile(src, dest);

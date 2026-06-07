@@ -274,7 +274,8 @@
         const result = global.__owSyncJson('POST', '/api/vaults/open', { path: args[0], create: args[1] === true });
         if (!result.ok) return result.error || false;
         localStorage.setItem('obsidian-web:lastVaultId', result.id);
-        setTimeout(() => { location.href = '/?vault=' + encodeURIComponent(result.id); }, 0);
+        const target = result.slug ? '/' + result.slug : '/?vault=' + encodeURIComponent(result.id);
+        setTimeout(() => { location.href = target; }, 0);
         return true;
       }
       if (channel === 'vault-remove') {
@@ -374,6 +375,16 @@
       ) {
         return;
       }
+      // Fire-and-forget channels with no meaningful web equivalent.
+      if (
+        channel === 'insider-build' ||
+        channel === 'update-app' ||
+        channel === 'check-update' ||
+        channel === 'focus-window' ||
+        channel === 'blur-window'
+      ) {
+        return;
+      }
       console.warn('[obsidian-web] unhandled ipcRenderer.send:', channel, args);
       window.__owMissing && window.__owMissing.record('send', channel);
     },
@@ -400,7 +411,11 @@
       if (channel) ipcListeners.delete(channel);
       else ipcListeners.clear();
     },
-    invoke: warnUnimplemented('ipcRenderer.invoke'),
+    invoke(channel, ...args) {
+      console.warn('[obsidian-web] ipcRenderer.invoke called:', channel, args);
+      window.__owMissing && window.__owMissing.record('invoke', channel);
+      return Promise.resolve(null);
+    },
   };
 
   // ---- remote stubs -----------------------------------------------------

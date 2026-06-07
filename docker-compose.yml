@@ -1,0 +1,18 @@
+services:
+  obsidian-web:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      # To add an external vault, mount it under /app/data/vaults/<name>:
+      # - /path/to/your/notes:/app/data/vaults/my-notes
+      - obsidian-data:/app/data
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      VAULTS_DIR: /app/data/vaults
+      # WATCH_POLLING: "true"       # enable if vault is on NFS/SMB/FUSE
+    restart: unless-stopped
+
+volumes:
+  obsidian-data:

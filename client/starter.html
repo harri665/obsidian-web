@@ -23,5 +23,36 @@
   <script src="/obsidian/i18n.js"></script>
   <script src="/obsidian/starter.js"></script>
 
+  <!-- Intercept Obsidian's "Manage vaults" button and redirect to our page.
+       Obsidian's manage-vaults modal silently fails in the browser context,
+       so we fall back to /manage after a short delay if nothing happened. -->
+  <script>
+  (function () {
+    var redirectTimer = null;
+
+    // Capture-phase listener fires before Obsidian's handlers.
+    document.addEventListener('click', function (e) {
+      var el = e.target;
+      // Walk up to find the actual button element.
+      for (var i = 0; i < 5 && el && el !== document.body; i++, el = el.parentElement) {
+        var tag = el.tagName;
+        if (tag !== 'BUTTON' && tag !== 'A' && el.getAttribute('role') !== 'button') continue;
+        var text = (el.textContent || '').trim().toLowerCase();
+        // Match English "manage" or Hebrew "ניהול" (manage).
+        if (text.indexOf('manage') === -1 && text.indexOf('ניהול') === -1) break;
+        // Found the manage-vaults button. Give Obsidian 400 ms to open a modal.
+        // If nothing appears, navigate to our vault management page.
+        clearTimeout(redirectTimer);
+        redirectTimer = setTimeout(function () {
+          if (!document.querySelector('.modal-container, .modal-bg, .prompt')) {
+            location.href = '/manage';
+          }
+        }, 400);
+        break;
+      }
+    }, true); // capture phase
+  })();
+  </script>
+
 </body>
 </html>

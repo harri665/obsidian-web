@@ -17,6 +17,7 @@ const config = require('./config');
 const createFsRouter = require('./api/fs');
 const createElectronRouter = require('./api/electron');
 const createVaultsRouter = require('./api/vaults');
+const createManageRouter = require('./api/manage');
 const createBootstrapRouter = require('./api/bootstrap');
 const { warmUpBootstrapCache } = require('./api/bootstrap');
 const createProxyRouter = require('./api/proxy');
@@ -52,13 +53,16 @@ function createApp(appConfig = config) {
   // changes automatically. The bust value is recomputed at server startup from
   // client/ file mtimes — no manual ?v=N bump needed.
   const cacheBust = appConfig.clientCacheBust || 'dev';
-  async function sendHtmlWithCacheBust(res, filePath) {
+  async function sendHtmlWithCacheBust(res, filePath, vaultId = null) {
     try {
       let html = await fsp.readFile(filePath, 'utf8');
       // Inject (or replace) ?v=<bust> on all /client/ script and link tags.
       // Handles both: existing ?v=3 and paths without any query string.
       html = html.replace(/((?:src|href)="\/client\/[^"]*?)(\?v=[^"&]*)?"(?=[^>]*>)/g,
         (_, prefix) => `${prefix}?v=${cacheBust}"`);
+      if (vaultId) {
+        html = html.replace('</head>', `<script>window.__owVaultId=${JSON.stringify(vaultId)};</script>\n</head>`);
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.send(html);
@@ -67,13 +71,22 @@ function createApp(appConfig = config) {
     }
   }
 
-  // Custom entry point - our index.html, not Obsidian's.
+  // Root: if a vault ID was passed (e.g. from vault-open navigation), serve
+  // the app for that vault; otherwise redirect to /default in vaultsDir mode.
   app.get('/', (req, res) => {
+    if (req.query.vault) {
+      return sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), req.query.vault);
+    }
+    if (appConfig.vaultsDir) return res.redirect('/default');
     sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'));
   });
 
   app.get(['/starter', '/starter.html'], (req, res) => {
     sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'starter.html'));
+  });
+
+  app.get('/manage', (req, res) => {
+    sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'manage.html'));
   });
 
   // Static files - order matters: client/ first, then obsidian/.
@@ -114,9 +127,25 @@ function createApp(appConfig = config) {
   // API routes.
   app.use('/api/bootstrap', createBootstrapRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/proxy-request', createProxyRouter());
-  app.use('/api/vaults', createVaultsRouter(vaultRegistry));
+  app.use('/api/vaults', createVaultsRouter(vaultRegistry, appConfig.vaultsDir));
+  app.use('/api/manage', createManageRouter(appConfig));
   app.use('/api/fs', createFsRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/electron', createElectronRouter(vaultRegistry, appConfig.vaultPath));
+
+  // Named vault route — must be last so it doesn't shadow static/API paths.
+  // GET /:slug opens an existing vault dir at vaultsDir/slug.
+  // Does NOT auto-create — returns 404 for unknown slugs.
+  const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+  app.get('/:slug', async (req, res) => {
+    const { slug } = req.params;
+    if (!SLUG_RE.test(slug)) return res.status(400).send('Invalid vault name');
+
+    const vaultPath = path.join(appConfig.vaultsDir, slug);
+    const result = vaultRegistry.open(vaultPath, false);
+    if (!result.ok) return res.status(404).send('Vault not found: ' + slug);
+
+    await sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), result.id);
+  });
 
   app.locals.vaultRegistry = vaultRegistry;
   return app;

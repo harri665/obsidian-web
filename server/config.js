@@ -61,6 +61,7 @@ module.exports = {
   port: parsePort(process.env.PORT),
   host: process.env.HOST || '127.0.0.1',
   vaultPath: path.resolve(PROJECT_ROOT, process.env.VAULT_PATH || 'test-vault'),
+  vaultsDir: path.resolve(PROJECT_ROOT, process.env.VAULTS_DIR || 'data/vaults'),
   registryPath: path.resolve(PROJECT_ROOT, process.env.VAULT_REGISTRY || 'data/vaults.json'),
   obsidianPath: path.resolve(PROJECT_ROOT, 'obsidian'),
   clientPath: CLIENT_PATH,

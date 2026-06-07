@@ -1,0 +1,11 @@
+.git/
+node_modules/
+obsidian/
+.cache/
+data/
+cf/
+*.log
+.DS_Store
+.idea/
+.vscode/
+docs/
