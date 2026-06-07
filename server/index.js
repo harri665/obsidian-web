@@ -52,13 +52,16 @@ function createApp(appConfig = config) {
   // changes automatically. The bust value is recomputed at server startup from
   // client/ file mtimes — no manual ?v=N bump needed.
   const cacheBust = appConfig.clientCacheBust || 'dev';
-  async function sendHtmlWithCacheBust(res, filePath) {
+  async function sendHtmlWithCacheBust(res, filePath, vaultId = null) {
     try {
       let html = await fsp.readFile(filePath, 'utf8');
       // Inject (or replace) ?v=<bust> on all /client/ script and link tags.
       // Handles both: existing ?v=3 and paths without any query string.
       html = html.replace(/((?:src|href)="\/client\/[^"]*?)(\?v=[^"&]*)?"(?=[^>]*>)/g,
         (_, prefix) => `${prefix}?v=${cacheBust}"`);
+      if (vaultId) {
+        html = html.replace('</head>', `<script>window.__owVaultId=${JSON.stringify(vaultId)};</script>\n</head>`);
+      }
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache');
       res.send(html);
@@ -67,8 +70,9 @@ function createApp(appConfig = config) {
     }
   }
 
-  // Custom entry point - our index.html, not Obsidian's.
+  // Root redirects to the default vault when vaultsDir mode is active.
   app.get('/', (req, res) => {
+    if (appConfig.vaultsDir) return res.redirect('/default');
     sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'));
   });
 
@@ -114,9 +118,25 @@ function createApp(appConfig = config) {
   // API routes.
   app.use('/api/bootstrap', createBootstrapRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/proxy-request', createProxyRouter());
-  app.use('/api/vaults', createVaultsRouter(vaultRegistry));
+  app.use('/api/vaults', createVaultsRouter(vaultRegistry, appConfig.vaultsDir));
   app.use('/api/fs', createFsRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/electron', createElectronRouter(vaultRegistry, appConfig.vaultPath));
+
+  // Named vault route — must be last so it doesn't shadow static/API paths.
+  // GET /:slug auto-creates the vault dir at vaultsDir/slug on first visit,
+  // registers it in the vault registry, then serves index.html with the
+  // vault ID pre-injected so boot.js doesn't need a ?vault= query param.
+  const SLUG_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+  app.get('/:slug', async (req, res) => {
+    const { slug } = req.params;
+    if (!SLUG_RE.test(slug)) return res.status(400).send('Invalid vault name');
+
+    const vaultPath = path.join(appConfig.vaultsDir, slug);
+    const result = vaultRegistry.open(vaultPath, true);
+    if (!result.ok) return res.status(500).send('Could not open vault: ' + result.error);
+
+    await sendHtmlWithCacheBust(res, path.join(appConfig.clientPath, 'index.html'), result.id);
+  });
 
   app.locals.vaultRegistry = vaultRegistry;
   return app;

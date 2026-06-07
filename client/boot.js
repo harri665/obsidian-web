@@ -49,7 +49,11 @@ const OBSIDIAN_SCRIPTS = [
 
   const VAULT_BASE = '/vault';
   const params = new URLSearchParams(location.search);
-  let VAULT_ID = params.get('vault') || localStorage.getItem('obsidian-web:lastVaultId') || '';
+  // window.__owVaultId is injected server-side when serving via /:slug route.
+  let VAULT_ID = (typeof window.__owVaultId === 'string' ? window.__owVaultId : '')
+    || params.get('vault')
+    || localStorage.getItem('obsidian-web:lastVaultId')
+    || '';
 
   if (!VAULT_ID && location.pathname !== '/starter') {
     location.href = '/starter';
