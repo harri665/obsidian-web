@@ -12,6 +12,7 @@ const compression = require('compression');
 const fsp = require('fs/promises');
 const http = require('http');
 const path = require('path');
+const { getClient } = require('./webdav-client');
 
 const config = require('./config');
 const createFsRouter = require('./api/fs');
@@ -131,6 +132,70 @@ function createApp(appConfig = config) {
   app.use('/api/manage', createManageRouter(appConfig));
   app.use('/api/fs', createFsRouter(vaultRegistry, appConfig.vaultPath));
   app.use('/api/electron', createElectronRouter(vaultRegistry, appConfig.vaultPath));
+
+  // Vault resource route — serves vault files at /vault/<relpath>?<mtime>.
+  // Obsidian uses vault.adapter.basePath ('/vault') as a URL prefix for images
+  // and other attachments, bypassing the file-url IPC entirely.
+  // We identify the vault from the Referer header (the page URL has ?vault=<id>
+  // or /<slug>), falling back to the most-recently-opened vault.
+  app.get('/vault/*', async (req, res) => {
+    const relPath = req.params[0] || '';
+    if (!relPath || relPath.includes('..')) return res.status(400).send('Bad path');
+
+    // Resolve vault ID from Referer or most-recently-opened.
+    let vaultId = null;
+    const referer = req.headers.referer || req.headers.referrer || '';
+    if (referer) {
+      try {
+        const refUrl = new URL(referer);
+        vaultId = refUrl.searchParams.get('vault');
+        if (!vaultId) {
+          const slugMatch = refUrl.pathname.match(/^\/([a-zA-Z0-9_-]{1,64})$/);
+          if (slugMatch) vaultId = vaultRegistry.findBySlug(slugMatch[1]);
+        }
+      } catch (_) {}
+    }
+    if (!vaultId) {
+      const vaults = vaultRegistry.list();
+      const latest = Object.entries(vaults)
+        .filter(([, v]) => v.open)
+        .sort((a, b) => b[1].ts - a[1].ts)[0];
+      if (latest) vaultId = latest[0];
+    }
+
+    const vault = vaultId ? vaultRegistry.get(vaultId) : null;
+
+    if (vault && vault.type === 'webdav') {
+      try {
+        const client = getClient(vaultId, vault);
+        const data = await client.readBinary(relPath);
+        const ext = path.extname(relPath).toLowerCase();
+        const mime = {
+          '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+          '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
+          '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg',
+          '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.webm': 'video/webm',
+          '.ico': 'image/x-icon', '.bmp': 'image/bmp', '.tiff': 'image/tiff',
+        }[ext] || 'application/octet-stream';
+        res.setHeader('Content-Type', mime);
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return res.send(data);
+      } catch (err) {
+        return res.status(err.code === 'ENOENT' ? 404 : 500).send(err.message);
+      }
+    }
+
+    // Local vault.
+    const vaultRoot = vault ? vault.path : appConfig.vaultPath;
+    const absolute = path.resolve(vaultRoot, relPath.split('/').join(path.sep));
+    const normalizedRoot = path.resolve(vaultRoot);
+    if (absolute !== normalizedRoot && !absolute.startsWith(normalizedRoot + path.sep)) {
+      return res.status(403).send('Forbidden');
+    }
+    res.sendFile(absolute, { headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } }, (err) => {
+      if (err) res.status(err.status || 404).send('Not found: ' + relPath);
+    });
+  });
 
   // Named vault route — must be last so it doesn't shadow static/API paths.
   // GET /:slug — looks up by vault name first (covers WebDAV + renamed vaults),
