@@ -55,7 +55,8 @@ function parsePropFind(xml) {
 
 // ── HTTP helper ──────────────────────────────────────────────────────────────
 
-function rawRequest(method, fullUrl, headers, body) {
+function rawRequest(method, fullUrl, headers, body, _redirects) {
+  const redirects = _redirects || 0;
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(fullUrl); } catch (e) { return reject(e); }
@@ -68,6 +69,13 @@ function rawRequest(method, fullUrl, headers, body) {
       headers: headers || {},
     };
     const req = lib.request(options, (res) => {
+      // Follow 301/302/307/308 redirects (e.g. Nextcloud adding trailing slash).
+      if (redirects < 5 && (res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307 || res.statusCode === 308) && res.headers.location) {
+        res.resume();
+        const next = new URL(res.headers.location, fullUrl).toString();
+        resolve(rawRequest(method, next, headers, body, redirects + 1));
+        return;
+      }
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks) }));
@@ -81,14 +89,27 @@ function rawRequest(method, fullUrl, headers, body) {
 
 // ── Client factory ────────────────────────────────────────────────────────────
 
+// Detect Nextcloud public-share URLs and extract the share token so it can
+// be used as the Basic-auth username (Nextcloud requires this even for
+// password-less public shares).
+// Matches: /public.php/dav/files/<TOKEN>  or  /public.php/webdav
+function detectNextcloudToken(url) {
+  const m = url.match(/\/public\.php\/(?:dav\/files|webdav)\/([^/?#]+)/i);
+  return m ? m[1] : null;
+}
+
 function createWebDavClient(vaultUrl, username, password) {
   const base = vaultUrl.replace(/\/$/, '');
   const parsedBase = new URL(base);
   // Base path used to strip the vault prefix from PROPFIND hrefs
   const basePath = parsedBase.pathname.replace(/\/$/, '');
 
-  const authHeaders = username
-    ? { Authorization: 'Basic ' + Buffer.from(username + ':' + (password || '')).toString('base64') }
+  // If no username was provided, check whether this looks like a Nextcloud
+  // public share. If so, use the share token as the Basic-auth username
+  // (Nextcloud returns 401 otherwise, even for password-less public shares).
+  const effectiveUsername = username || detectNextcloudToken(vaultUrl) || '';
+  const authHeaders = effectiveUsername
+    ? { Authorization: 'Basic ' + Buffer.from(effectiveUsername + ':' + (password || '')).toString('base64') }
     : {};
 
   function resolveUrl(relPath) {
@@ -135,9 +156,16 @@ function createWebDavClient(vaultUrl, username, password) {
     async testConnection() {
       try {
         const res = await request('PROPFIND', '', { Depth: '0' });
-        return res.status >= 200 && res.status < 300;
-      } catch (_) {
-        return false;
+        if (res.status >= 200 && res.status < 300) return { ok: true };
+        const snippet = res.body.toString('utf8').replace(/<[^>]+>/g, '').trim().slice(0, 120);
+        const hint = res.status === 401 ? ' (authentication required)'
+          : res.status === 403 ? ' (access denied)'
+          : res.status === 404 ? ' (URL not found)'
+          : res.status === 405 ? ' (PROPFIND not allowed — may not be a WebDAV endpoint)'
+          : '';
+        return { ok: false, status: res.status, error: `HTTP ${res.status}${hint}${snippet ? ': ' + snippet : ''}` };
+      } catch (err) {
+        return { ok: false, error: err.message };
       }
     },
 

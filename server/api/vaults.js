@@ -76,8 +76,8 @@ function createVaultsRouter(vaultRegistry, vaultsDir) {
     if (!url) return res.status(400).json({ ok: false, error: 'url is required' });
     try {
       const client = createWebDavClient(url, username || '', password || '');
-      const ok = await client.testConnection();
-      res.json({ ok });
+      const result = await client.testConnection();
+      res.json(result);
     } catch (err) {
       res.json({ ok: false, error: err.message });
     }
