@@ -19,9 +19,9 @@ COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ENV HOST=0.0.0.0
-ENV PORT=3000
+ENV PORT=3500
 
-EXPOSE 3000
+EXPOSE 3500
 
 WORKDIR /app/server
 ENTRYPOINT ["/entrypoint.sh"]

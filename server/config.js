@@ -14,7 +14,7 @@ const crypto = require('crypto');
 const fsSync = require('fs');
 
 function parsePort(raw) {
-  if (!raw) return 3000;
+  if (!raw) return 3500;
   const n = parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 1 || n > 65535) {
     throw new Error(`Invalid PORT value: "${raw}". Must be an integer between 1 and 65535.`);
