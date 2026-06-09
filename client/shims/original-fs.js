@@ -87,6 +87,29 @@
     return entry !== null && typeof entry.content === 'string';
   }
 
+  // Returns true if we can prove the path doesn't exist from the dirs cache,
+  // without hitting the server. Only applied inside .obsidian/ because that
+  // tree is always walked with hidden files included — so a missing entry
+  // genuinely means the file doesn't exist.
+  function isKnownMissing(p) {
+    const cache = global.__owBootstrapCache;
+    if (!cache || !cache.dirs) return false;
+    const rel = toRelative(p);
+    if (!rel.startsWith('.obsidian/')) return false;
+    const lastSlash = rel.lastIndexOf('/');
+    const parentRel = lastSlash >= 0 ? rel.slice(0, lastSlash) : '';
+    const name = lastSlash >= 0 ? rel.slice(lastSlash + 1) : rel;
+    const entries = cache.dirs[parentRel];
+    if (!entries) return false;
+    return !entries.some(function (e) { return e.name === name; });
+  }
+
+  function makeEnoent(p) {
+    const e = new Error('ENOENT: no such file or directory, \'' + p + '\'');
+    e.code = 'ENOENT';
+    return e;
+  }
+
   function encodePath(p) {
     return encodeURIComponent(toRelative(p));
   }
@@ -150,6 +173,7 @@
     if (typeof opts === 'function') { cb = opts; opts = {}; }
     const cached = getBootstrapEntry(p);
     if (cached) { Promise.resolve().then(() => cb(null, makeStatsFromCache(cached))); return; }
+    if (isKnownMissing(p)) { Promise.resolve().then(() => cb(makeEnoent(p))); return; }
     fetch('/api/fs/stat?' + vaultQuery() + 'path=' + encodePath(p))
       .then(async (r) => {
         const json = await r.json();
@@ -214,6 +238,7 @@
       });
       return;
     }
+    if (isKnownMissing(p)) { Promise.resolve().then(() => cb(makeEnoent(p))); return; }
     const url = '/api/fs/read?' + vaultQuery() + 'path=' + encodePath(p) + (encoding ? '&encoding=' + encoding : '');
     fetch(url)
       .then(async (r) => {
@@ -233,11 +258,19 @@
   }
 
   function writeFileAsync(p, data, opts, cb) {
-    // Only evict the file's cached content — the parent dir listing is still
-    // valid (the file exists, just with new content or as a new file).
-    // Evicting dirs is reserved for structural changes (unlink/rename).
     const _cache = global.__owBootstrapCache;
-    if (_cache && _cache.fs) delete _cache.fs[toRelative(p)];
+    if (_cache) {
+      const rel = toRelative(p);
+      if (_cache.fs) delete _cache.fs[rel];
+      // Only evict the parent dirs entry for .obsidian/ paths — that's the
+      // only subtree where isKnownMissing is used. Evicting dirs[''] (the root)
+      // when Obsidian writes .OBSIDIANTEST would cascade into a full readdir/stat
+      // waterfall for all vault files.
+      if (_cache.dirs && rel.startsWith('.obsidian/')) {
+        const parent = rel.slice(0, rel.lastIndexOf('/'));
+        delete _cache.dirs[parent];
+      }
+    }
     if (typeof opts === 'function') { cb = opts; opts = undefined; }
     const encoding = typeof opts === 'string' ? opts : (opts && opts.encoding);
     const url = '/api/fs/write?' + vaultQuery() + 'path=' + encodePath(p) + (encoding ? '&encoding=' + encoding : '');
@@ -341,6 +374,7 @@
   function statSync(p) {
     const cached = getBootstrapEntry(p);
     if (cached) return makeStatsFromCache(cached);
+    if (isKnownMissing(p)) throw makeEnoent(p);
     // silent404: Obsidian routinely stat()s paths that may not exist yet
     // (config files, plugins) and handles ENOENT via try/catch.  Suppress
     // the verbose URL in the error message to keep the console clean.
@@ -352,6 +386,7 @@
     const encoding = typeof opts === 'string' ? opts : (opts && opts.encoding);
     const cached = getBootstrapEntry(p);
     if (bootstrapHasContent(cached)) return encoding ? cached.content : new TextEncoder().encode(cached.content);
+    if (isKnownMissing(p)) throw makeEnoent(p);
     const url = '/api/fs/read?' + vaultQuery() + 'path=' + encodePath(p) + (encoding ? '&encoding=' + encoding : '');
     // Use __owSyncRequest with silent404 so missing files throw a clean ENOENT.
     // Note: sync XHR binary reads are limited to Latin-1 (xhr.responseText
@@ -373,9 +408,15 @@
   }
 
   function writeFileSync(p, data, opts) {
-    // Same as writeFileAsync: only evict fs content, not parent dir listing.
     const _cache = global.__owBootstrapCache;
-    if (_cache && _cache.fs) delete _cache.fs[toRelative(p)];
+    if (_cache) {
+      const rel = toRelative(p);
+      if (_cache.fs) delete _cache.fs[rel];
+      if (_cache.dirs && rel.startsWith('.obsidian/')) {
+        const parent = rel.slice(0, rel.lastIndexOf('/'));
+        delete _cache.dirs[parent];
+      }
+    }
     const encoding = typeof opts === 'string' ? opts : (opts && opts.encoding);
     const url = '/api/fs/write?' + vaultQuery() + 'path=' + encodePath(p) + (encoding ? '&encoding=' + encoding : '');
     global.__owSyncRequest('PUT', url, data == null ? '' : data);

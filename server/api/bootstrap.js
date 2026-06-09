@@ -414,14 +414,28 @@ async function _buildCacheEntry(vaultId, vaultRoot, vaultRegistry, full = false)
     dirsCache[''] = rootStats.filter(Boolean);
   } catch (_) {}
 
-  // If full=1: walk the entire vault (non-hidden) using the same walkDir helper
-  // used for .obsidian/ above. walkDir builds both fsCache and dirsCache
-  // recursively, including file content for text files. The root-listing entry
-  // (dirsCache['']) built above will be overwritten with identical data —
-  // that's fine; we avoid duplicating the walk logic.
+  // Walk top-level vault subdirectories (and recurse into them).
+  // For a partial build this pre-populates dirsCache and file content for vault
+  // notes so the client avoids a waterfall of individual stat/readdir/read
+  // round-trips during Obsidian startup.
+  // For a full build, walkDir on the vault root already covers everything —
+  // the root-listing entry in dirsCache will be overwritten with identical data.
   if (full) {
     setProgress(vaultId, { state: 'scanning', label: 'Scanning vault (full)...' });
     await walkDir(vaultRoot, vaultRoot, fsCache, dirsCache, false, progress);
+  } else {
+    setProgress(vaultId, { state: 'scanning', label: 'Scanning vault...' });
+    // Walk each non-hidden top-level directory in parallel so the partial build
+    // stays fast even for vaults with many subdirs.
+    await Promise.all(
+      (dirsCache[''] || [])
+        .filter(e => e.isDirectory)
+        .map(e => {
+          const abs = path.join(vaultRoot, e.name);
+          fsCache[e.name] = { mtime: e.mtime, size: e.size, isFile: false, isDirectory: true };
+          return walkDir(abs, vaultRoot, fsCache, dirsCache, false, progress).catch(() => {});
+        }),
+    );
   }
 
   setProgress(vaultId, { state: 'reading', label: 'Reading files...', pct: 80 });

@@ -452,7 +452,7 @@ const OBSIDIAN_SCRIPTS = [
       if (pollTimer) clearInterval(pollTimer);
     }
 
-    fetch('/api/bootstrap?vault=' + vaultParam + '&full=1')
+    fetch('/api/bootstrap?vault=' + vaultParam)
       .then(function (res) {
         if (!res.ok) throw new Error('HTTP ' + res.status);
         return res.json();
