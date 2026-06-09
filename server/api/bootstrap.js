@@ -567,9 +567,14 @@ async function warmUpBootstrapCache(vaultRegistry, fallbackVaultRoot) {
   }
   for (const id of ids) {
     const vault = vaults[id];
-    // Skip WebDAV vaults during startup warm-up to avoid blocking on network calls.
-    // They bootstrap on first access instead.
-    if (vault.type === 'webdav') continue;
+    if (vault.type === 'webdav') {
+      // Don't block startup on a remote scan, but kick off a full build in
+      // the background so the static viewer's first request can be served
+      // from cache instead of waiting on live WebDAV round-trips.
+      buildCacheEntry(id, null, vaultRegistry, true)
+        .catch((err) => console.warn(`[bootstrap] webdav warm-up failed for vault ${id}:`, err.message));
+      continue;
+    }
     const { path: vaultPath } = vault;
     try {
       // Phase 1: fast partial build so the first request is never a cold MISS.
@@ -587,3 +592,4 @@ module.exports = createBootstrapRouter;
 module.exports.serverCache = serverCache;
 module.exports.pendingBuilds = pendingBuilds;
 module.exports.warmUpBootstrapCache = warmUpBootstrapCache;
+module.exports.buildCacheEntry = buildCacheEntry;

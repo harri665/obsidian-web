@@ -19,6 +19,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const { marked } = require('marked');
 const { getClient } = require('../webdav-client');
+const bootstrap = require('./bootstrap');
 
 // ── Vault reader abstraction ──────────────────────────────────────────────────
 //
@@ -71,14 +72,35 @@ function cached(map, key, fetch) {
   return promise;
 }
 
-function makeWebDavReader(client, vaultId) {
+// If the bootstrap cache already has a full snapshot of this vault (built at
+// startup, or by the Obsidian app's own /api/bootstrap?full=1 call), serve
+// directory listings and note content straight from it — zero network calls.
+// It's kept fresh by api/fs.js, which deletes the entry on any write, so this
+// can only be stale for as long as an out-of-band WebDAV edit takes to notice.
+function ensureBootstrapWarm(vaultId, vaultRegistry) {
+  if (bootstrap.serverCache.has(vaultId)) return;
+  if (bootstrap.pendingBuilds.has(vaultId + ':full')) return;
+  bootstrap.buildCacheEntry(vaultId, null, vaultRegistry, true).catch(() => {});
+}
+
+function makeWebDavReader(client, vaultId, vaultRegistry) {
   const cache = getWebDavCache(vaultId);
   return {
     async readText(relPath) {
+      const entry = bootstrap.serverCache.get(vaultId);
+      const fsEntry = entry && entry.response.fs[relPath];
+      if (fsEntry && fsEntry.content !== undefined) return fsEntry.content;
+      ensureBootstrapWarm(vaultId, vaultRegistry);
       return cached(cache.texts, relPath, () => client.readText(relPath));
     },
     async readdir(relPath) {
       const key = relPath || '';
+      const entry = bootstrap.serverCache.get(vaultId);
+      const dirEntry = entry && entry.response.dirs[key];
+      if (dirEntry) {
+        return dirEntry.map(e => ({ name: e.name, isFile: e.isFile, isDirectory: e.isDirectory }));
+      }
+      ensureBootstrapWarm(vaultId, vaultRegistry);
       return cached(cache.dirs, key, async () => {
         const entries = await client.readdir(key);
         return entries
@@ -339,7 +361,7 @@ async function handleView(req, res, vaultRegistry, appConfig) {
   // Build the appropriate vault reader
   let reader;
   if (vault && vault.type === 'webdav') {
-    reader = makeWebDavReader(getClient(vaultId, vault), vaultId);
+    reader = makeWebDavReader(getClient(vaultId, vault), vaultId, vaultRegistry);
   } else {
     const vaultRoot = vault ? vault.path : appConfig.vaultPath;
     reader = makeLocalReader(vaultRoot);
