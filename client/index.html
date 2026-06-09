@@ -5,6 +5,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"/>
   <title>Obsidian Web</title>
   <link href="/obsidian/app.css" type="text/css" rel="stylesheet"/>
+  <!-- Preload Obsidian scripts so the browser downloads them during the
+       bootstrap fetch instead of waiting for it to finish first. -->
+  <link rel="preload" href="/obsidian/lib/codemirror/codemirror.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/codemirror/overlay.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/codemirror/markdown.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/codemirror/cm-addons.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/codemirror/vim.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/codemirror/meta.min.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/moment.min.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/pixi.min.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/i18next.min.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/scrypt.js" as="script"/>
+  <link rel="preload" href="/obsidian/lib/turndown.js" as="script"/>
+  <link rel="preload" href="/obsidian/enhance.js" as="script"/>
+  <link rel="preload" href="/obsidian/i18n.js" as="script"/>
+  <link rel="preload" href="/obsidian/app.js" as="script"/>
   <style>
     #ow-loading {
       position: fixed;

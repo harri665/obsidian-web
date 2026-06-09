@@ -94,8 +94,12 @@ function createApp(appConfig = config) {
   app.use('/client', express.static(appConfig.clientPath, {
     setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
   }));
+  // Obsidian's static files don't change between page loads (only on Obsidian
+  // package upgrades), so a 1-hour TTL avoids per-request revalidation
+  // round-trips without risking stale scripts for more than an hour.
+  const OBSIDIAN_CACHE = 'public, max-age=3600, must-revalidate';
   app.use('/obsidian', express.static(appConfig.obsidianPath, {
-    setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+    setHeaders: (res) => res.setHeader('Cache-Control', OBSIDIAN_CACHE),
   }));
 
   // Obsidian's renderer fetches resources via absolute paths like /i18n/he.txt
@@ -104,7 +108,7 @@ function createApp(appConfig = config) {
   const RESOURCE_DIRS = ['i18n', 'lib', 'public', 'sandbox'];
   for (const dir of RESOURCE_DIRS) {
     app.use('/' + dir, express.static(path.join(appConfig.obsidianPath, dir), {
-      setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
+      setHeaders: (res) => res.setHeader('Cache-Control', OBSIDIAN_CACHE),
     }));
   }
 
@@ -120,7 +124,7 @@ function createApp(appConfig = config) {
   for (const f of ROOT_FILES) {
     app.get('/' + f, (req, res) => {
       res.sendFile(path.join(appConfig.obsidianPath, f), {
-        headers: { 'Cache-Control': 'no-cache' },
+        headers: { 'Cache-Control': OBSIDIAN_CACHE },
       });
     });
   }
