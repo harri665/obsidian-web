@@ -22,6 +22,7 @@ const createManageRouter = require('./api/manage');
 const createBootstrapRouter = require('./api/bootstrap');
 const { warmUpBootstrapCache } = require('./api/bootstrap');
 const createProxyRouter = require('./api/proxy');
+const { handleView } = require('./api/view');
 const attachWatchServer = require('./api/watch');
 const VaultRegistry = require('./vault-registry');
 
@@ -154,7 +155,8 @@ function createApp(appConfig = config) {
         const refUrl = new URL(referer);
         vaultId = refUrl.searchParams.get('vault');
         if (!vaultId) {
-          const slugMatch = refUrl.pathname.match(/^\/([a-zA-Z0-9_-]{1,64})$/);
+          // Match the first path segment — handles both /:slug and /:slug/:notepath
+          const slugMatch = refUrl.pathname.match(/^\/([a-zA-Z0-9_-]{1,64})(?:\/|$)/);
           if (slugMatch) vaultId = vaultRegistry.findBySlug(slugMatch[1]);
         }
       } catch (_) {}
@@ -199,6 +201,18 @@ function createApp(appConfig = config) {
     res.sendFile(absolute, { headers: { 'Cache-Control': 'public, max-age=31536000, immutable' } }, (err) => {
       if (err) res.status(err.status || 404).send('Not found: ' + relPath);
     });
+  });
+
+  // Static note viewer — GET /:slug/:notePath(*) renders a note as read-only HTML.
+  // Must come before /:slug so multi-segment paths don't fall through to the app.
+  app.get('/:slug/*', async (req, res, next) => {
+    try {
+      const handled = await handleView(req, res, vaultRegistry, appConfig);
+      if (!handled) next();
+    } catch (err) {
+      console.error('[view] error:', err.message);
+      res.status(500).type('html').send('<pre>' + err.message + '</pre>');
+    }
   });
 
   // Named vault route — must be last so it doesn't shadow static/API paths.
