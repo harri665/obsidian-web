@@ -42,16 +42,49 @@ function makeLocalReader(vaultRoot) {
   };
 }
 
-function makeWebDavReader(client) {
+// ── WebDAV read cache ──────────────────────────────────────────────────────────
+//
+// The static viewer is read-only and re-resolves the same notes, embeds and
+// directory listings on every page view (and again for each embedded note).
+// Without a cache, each of those is a live PROPFIND/GET round-trip to the
+// remote WebDAV server, which is what makes "static" pages feel slow.
+// A short TTL cache keeps repeat views (and link/embed resolution within a
+// single page) effectively instant while still picking up edits within a
+// reasonable window.
+const WEBDAV_CACHE_TTL_MS = 60_000;
+const webdavCaches = new Map(); // vaultId → { dirs: Map, texts: Map }
+
+function getWebDavCache(vaultId) {
+  let cache = webdavCaches.get(vaultId);
+  if (!cache) {
+    cache = { dirs: new Map(), texts: new Map() };
+    webdavCaches.set(vaultId, cache);
+  }
+  return cache;
+}
+
+function cached(map, key, fetch) {
+  const hit = map.get(key);
+  if (hit && Date.now() - hit.time < WEBDAV_CACHE_TTL_MS) return hit.promise;
+  const promise = fetch().catch(err => { map.delete(key); throw err; });
+  map.set(key, { time: Date.now(), promise });
+  return promise;
+}
+
+function makeWebDavReader(client, vaultId) {
+  const cache = getWebDavCache(vaultId);
   return {
     async readText(relPath) {
-      return client.readText(relPath);
+      return cached(cache.texts, relPath, () => client.readText(relPath));
     },
     async readdir(relPath) {
-      const entries = await client.readdir(relPath || '');
-      return entries
-        .filter(e => !e.name.startsWith('.'))
-        .map(e => ({ name: e.name, isFile: e.isFile, isDirectory: e.isDirectory }));
+      const key = relPath || '';
+      return cached(cache.dirs, key, async () => {
+        const entries = await client.readdir(key);
+        return entries
+          .filter(e => !e.name.startsWith('.'))
+          .map(e => ({ name: e.name, isFile: e.isFile, isDirectory: e.isDirectory }));
+      });
     },
   };
 }
@@ -306,7 +339,7 @@ async function handleView(req, res, vaultRegistry, appConfig) {
   // Build the appropriate vault reader
   let reader;
   if (vault && vault.type === 'webdav') {
-    reader = makeWebDavReader(getClient(vaultId, vault));
+    reader = makeWebDavReader(getClient(vaultId, vault), vaultId);
   } else {
     const vaultRoot = vault ? vault.path : appConfig.vaultPath;
     reader = makeLocalReader(vaultRoot);

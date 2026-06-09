@@ -13,6 +13,14 @@
 const https = require('https');
 const http = require('http');
 
+// Keep-alive agents shared across all WebDAV requests. Without these, Node's
+// default agents open a fresh TCP connection (and, for https, a fresh TLS
+// handshake) for every single PROPFIND/GET/PUT — on a remote WebDAV server
+// (e.g. Nextcloud over the internet) that can add hundreds of ms per request,
+// which adds up fast for a note view that issues several requests.
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 8 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 8 });
+
 // ── XML helpers ─────────────────────────────────────────────────────────────
 
 function xmlTag(xml, tag) {
@@ -60,13 +68,15 @@ function rawRequest(method, fullUrl, headers, body, _redirects) {
   return new Promise((resolve, reject) => {
     let parsed;
     try { parsed = new URL(fullUrl); } catch (e) { return reject(e); }
-    const lib = parsed.protocol === 'https:' ? https : http;
+    const isHttps = parsed.protocol === 'https:';
+    const lib = isHttps ? https : http;
     const options = {
       hostname: parsed.hostname,
-      port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+      port: parsed.port || (isHttps ? 443 : 80),
       path: parsed.pathname + (parsed.search || ''),
       method,
       headers: headers || {},
+      agent: isHttps ? httpsAgent : httpAgent,
     };
     const req = lib.request(options, (res) => {
       // Follow 301/302/307/308 redirects (e.g. Nextcloud adding trailing slash).
